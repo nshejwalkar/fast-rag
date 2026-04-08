@@ -1,13 +1,12 @@
 # Financial RAG Baseline Demo
 
-Pacific internship submission demo: a clean, explicit, naive financial RAG pipeline with TTFT-first instrumentation.
+A clean, explicit financial RAG pipeline with TTFT-first instrumentation.
 
 ## Stack
 
 - Next.js App Router + TypeScript
 - Supabase (Postgres + pgvector + `match_chunks` RPC)
 - Anthropic Claude Haiku for streaming answer generation
-- No LangChain or framework abstractions
 
 ## Required Environment Variables (`.env.local`)
 
@@ -15,15 +14,8 @@ Pacific internship submission demo: a clean, explicit, naive financial RAG pipel
 NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 ANTHROPIC_API_KEY=...
-```
-
-Optional for real embeddings:
-
-```bash
 OPENAI_API_KEY=...
 ```
-
-`OPENAI_API_KEY` is required. The app and seeding script will fail fast if embeddings are unavailable.
 
 ## Run
 
@@ -37,9 +29,18 @@ npm run dev
 ```bash
 npm run seed
 ```
-
-This inserts 5 fake docs / 10 chunks across `AAPL`, `MSFT`, and `TSLA`, with mixed metadata:
+inserts 30+ fake documents / 100+ chunks across several companies, with mixed metadata:
 `doc_type`, `quarter`, `access_scope`.
+
+## Benchmark Naive vs Optimized
+```bash
+npm run perf
+```
+runs all of the performance tests. For both implementations, we run these tests:
+1. single prompt response (15 different prompts)
+2. multi turn conversation (2 conversations)
+   - conversation 1 is written to stay within similar context
+   - conversation 2 is written to be more adversarial, jumping around unrelated questions
 
 ## What’s Instrumented
 
@@ -56,5 +57,3 @@ This inserts 5 fake docs / 10 chunks across `AAPL`, `MSFT`, and `TSLA`, with mix
 - `lib/buildContext.ts`
 - `lib/llm.ts`
 - `app/api/chat/route.ts`
-
-The retrieval call site in `app/api/chat/route.ts` includes a TODO marker for the future speculative retrieval optimization hook.
