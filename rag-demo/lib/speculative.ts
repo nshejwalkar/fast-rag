@@ -1,5 +1,10 @@
-import { embed } from "./embed";
-import { getSupabaseClient } from "./supabase";
+import { embed } from "./embed.ts";
+import { getSupabaseClient } from "./supabase.ts";
+import {
+  ENTITY_MAP,
+  SPECULATIVE_CANDIDATE_K,
+  SPECULATIVE_SIMILARITY_THRESHOLD,
+} from "./constants.ts";
 
 // In-memory state — fine for a single-server demo.
 // Production equivalent: store in Redis keyed by session or tenant.
@@ -17,14 +22,6 @@ export type SpeculativeJob = {
 let latestJob: SpeculativeJob | null = null;
 let currentGeneration = 0;
 
-// Naive entity detection via dictionary lookup.
-// Production: replace with an NER model or a proper financial entity index.
-const ENTITY_MAP: Record<string, string> = {
-  apple: "AAPL",
-  tesla: "TSLA",
-  microsoft: "MSFT",
-  amazon: "AMZN",
-};
 
 export function extractEntities(text: string): string[] {
   const lower = text.toLowerCase();
@@ -49,6 +46,31 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dot / (Math.sqrt(normA) * Math.sqrt(normB) || 1);
 }
 
+export type SpeculativeReuseDebug = {
+  similarity: number;
+  threshold: number;
+  missingEntities: string[];
+  pass: boolean;
+};
+
+export function evaluateSpeculativeReuse(
+  job: SpeculativeJob,
+  finalEmbedding: number[],
+  finalEntities: string[]
+): SpeculativeReuseDebug {
+  const similarity = cosineSimilarity(job.embedding, finalEmbedding);
+  const missingEntities = job.entities.filter((entity) => !finalEntities.includes(entity));
+  const pass =
+    similarity >= SPECULATIVE_SIMILARITY_THRESHOLD && missingEntities.length === 0;
+
+  return {
+    similarity,
+    threshold: SPECULATIVE_SIMILARITY_THRESHOLD,
+    missingEntities,
+    pass,
+  };
+}
+
 // Returns true if the speculative job's candidate pool is safe to reuse for the final query.
 // Two checks: embedding similarity >= 0.85, and speculative entities ⊆ final entities.
 export function isReusable(
@@ -56,11 +78,7 @@ export function isReusable(
   finalEmbedding: number[],
   finalEntities: string[]
 ): boolean {
-  if (cosineSimilarity(job.embedding, finalEmbedding) < 0.85) return false;
-  for (const entity of job.entities) {
-    if (!finalEntities.includes(entity)) return false;
-  }
-  return true;
+  return evaluateSpeculativeReuse(job, finalEmbedding, finalEntities).pass;
 }
 
 // Re-sort the candidate pool by cosine similarity to the final query embedding,
@@ -108,7 +126,7 @@ export async function speculativeRetrieve(
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.rpc("match_chunks", {
     query_embedding: embedding,
-    match_count: 10,
+    match_count: SPECULATIVE_CANDIDATE_K,
     filter_ticker: ticker ?? null,
   });
 

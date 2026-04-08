@@ -1,5 +1,6 @@
-import { getSupabaseClient } from "./supabase";
-import { embed } from "./embed";
+import { getSupabaseClient } from "./supabase.ts";
+import { embed } from "./embed.ts";
+import { RETRIEVAL_TOP_K } from "./constants.ts";
 
 export type RetrievedChunk = {
   id: string;
@@ -23,7 +24,7 @@ export async function retrieve(
 
   const { data, error } = await supabase.rpc("match_chunks", {
     query_embedding: queryEmbedding,
-    match_count: 5,
+    match_count: RETRIEVAL_TOP_K,
     filter_ticker: ticker ?? null,
   });
 

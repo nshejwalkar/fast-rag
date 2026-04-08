@@ -1,4 +1,4 @@
-import type { RetrievedChunk } from "./retrieve";
+import type { RetrievedChunk } from "./retrieve.ts";
 
 // Fixed system prompt — defined as a module-level constant, never constructed dynamically.
 // This is the stable prefix that Anthropic's API-level cache can reliably hit.

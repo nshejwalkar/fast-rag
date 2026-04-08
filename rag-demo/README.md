@@ -23,7 +23,7 @@ Optional for real embeddings:
 OPENAI_API_KEY=...
 ```
 
-If `OPENAI_API_KEY` is missing, `lib/embed.ts` uses a deterministic local fallback vector for demo continuity.
+`OPENAI_API_KEY` is required. The app and seeding script will fail fast if embeddings are unavailable.
 
 ## Run
 

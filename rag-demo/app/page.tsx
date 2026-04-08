@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { SPECULATIVE_DEBOUNCE_MS } from "@/lib/constants";
 
 type Mode = "naive" | "optimized";
 
@@ -45,6 +46,20 @@ export default function Home() {
   const [debugChunks, setDebugChunks] = useState<DebugChunk[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  // Clear all conversation state when the mode changes so naive and optimized
+  // results are never mixed in the same session.
+  useEffect(() => {
+    setMessages([]);
+    setMetrics(INITIAL_METRICS);
+    setDebugChunks([]);
+    setError(null);
+    setQuery("");
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+  }, [mode]);
+
   // Debounce timer for speculative retrieval (optimized mode only).
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -67,7 +82,7 @@ export default function Home() {
       }).catch(() => {
         // Fire and forget — failures are non-fatal; chat will fall back to full retrieval.
       });
-    }, 300);
+    }, SPECULATIVE_DEBOUNCE_MS);
   };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {

@@ -1,4 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
+import {
+  ANTHROPIC_PROMPT_CACHING_BETA,
+  LLM_CANDIDATE_MODELS,
+  LLM_MAX_TOKENS,
+} from "./constants.ts";
 
 async function* toTokenStream(
   stream: AsyncIterable<Anthropic.Beta.Messages.BetaRawMessageStreamEvent>
@@ -20,14 +25,7 @@ export async function streamAnswer(
   const anthropic = new Anthropic({ apiKey });
   const configuredModel = process.env.ANTHROPIC_MODEL?.trim();
   const candidateModels = Array.from(
-    new Set(
-      [
-        configuredModel,
-        "claude-3-5-haiku-latest",
-        "claude-3-5-haiku-20241022",
-        "claude-3-haiku-20240307",
-      ].filter(Boolean)
-    )
+    new Set([configuredModel, ...LLM_CANDIDATE_MODELS].filter(Boolean))
   ) as string[];
 
   // Split the prompt into two content blocks:
@@ -56,9 +54,9 @@ export async function streamAnswer(
     try {
       const stream = await anthropic.beta.messages.create({
         model,
-        max_tokens: 500,
+        max_tokens: LLM_MAX_TOKENS,
         stream: true,
-        betas: ["prompt-caching-2024-07-31"],
+        betas: [ANTHROPIC_PROMPT_CACHING_BETA],
         messages,
       });
 

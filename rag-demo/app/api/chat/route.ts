@@ -1,9 +1,21 @@
 import { buildContext } from "@/lib/buildContext";
-import { canReuseEvidence, getLastEvidencePack, storeEvidencePack } from "@/lib/evidence";
+import { RETRIEVAL_TOP_K, SNIPPET_MAX_LENGTH } from "@/lib/constants";
+import {
+  evaluateEvidenceReuse,
+  getLastEvidencePack,
+  storeEvidencePack,
+  type EvidenceReuseDebug,
+} from "@/lib/evidence";
 import { streamAnswer } from "@/lib/llm";
 import { fetchChunksByIds, retrieve, type RetrievedChunk } from "@/lib/retrieve";
 import { embed } from "@/lib/embed";
-import { extractEntities, getLatestJob, isReusable, rescore } from "@/lib/speculative";
+import {
+  extractEntities,
+  getLatestJob,
+  rescore,
+  evaluateSpeculativeReuse,
+  type SpeculativeReuseDebug,
+} from "@/lib/speculative";
 
 type ChatRequest = {
   query?: string;
@@ -11,9 +23,9 @@ type ChatRequest = {
   mode?: "naive" | "optimized";
 };
 
-function toSnippet(text: string, maxLength = 180): string {
+function toSnippet(text: string): string {
   const trimmed = text.trim();
-  return trimmed.length <= maxLength ? trimmed : `${trimmed.slice(0, maxLength)}...`;
+  return trimmed.length <= SNIPPET_MAX_LENGTH ? trimmed : `${trimmed.slice(0, SNIPPET_MAX_LENGTH)}...`;
 }
 
 export async function POST(req: Request) {
@@ -34,6 +46,8 @@ export async function POST(req: Request) {
   const retrievalStart = Date.now();
   let retrievalPath = "retrieval fallback triggered";
   let chunks: RetrievedChunk[];
+  let evidenceDebug: EvidenceReuseDebug | null = null;
+  let speculativeDebug: SpeculativeReuseDebug | null = null;
 
   if (mode === "optimized") {
     // Embed once — reused for both evidence and speculative similarity checks.
@@ -41,21 +55,29 @@ export async function POST(req: Request) {
     const queryEntities = extractEntities(query);
 
     // Decision tree (optimized path):
-    //   1. Try evidence pack reuse (same chunks as previous turn, threshold 0.9)
-    //   2. Try speculative job reuse (warmed while user was typing, threshold 0.85)
+    //   1. Try evidence pack reuse (same chunks as previous turn, threshold from constants.ts)
+    //   2. Try speculative job reuse (warmed while user was typing, threshold from constants.ts)
     //   3. Fall back to full retrieval
 
     const evidencePack = getLastEvidencePack();
-    if (evidencePack && canReuseEvidence(evidencePack, queryEmbedding, queryEntities)) {
+    if (evidencePack) {
+      evidenceDebug = evaluateEvidenceReuse(evidencePack, queryEmbedding, queryEntities);
+    }
+
+    if (evidencePack && evidenceDebug?.pass) {
       retrievalPath = "evidence reuse hit";
       chunks = await fetchChunksByIds(evidencePack.chunkIds);
     } else {
       const job = getLatestJob();
-      if (job && isReusable(job, queryEmbedding, queryEntities)) {
+      if (job) {
+        speculativeDebug = evaluateSpeculativeReuse(job, queryEmbedding, queryEntities);
+      }
+
+      if (job && speculativeDebug?.pass) {
         retrievalPath = "speculative reuse hit";
         // Rescore the candidate pool against the final embedding and take top 5.
         const rescored = rescore(job, queryEmbedding);
-        chunks = await fetchChunksByIds(rescored.slice(0, 5));
+        chunks = await fetchChunksByIds(rescored.slice(0, RETRIEVAL_TOP_K));
         console.log(`[chat] speculative job generation=${job.generation}`);
       } else {
         // TODO: speculative retrieval hook
@@ -86,6 +108,15 @@ export async function POST(req: Request) {
   console.log(
     `[chat] mode=${mode} path="${retrievalPath}" chunks=${chunks.length} retrievalMs=${retrievalMs}ms`
   );
+  if (mode === "optimized") {
+    const evidencePart = evidenceDebug
+      ? `evidence(sim=${evidenceDebug.similarity.toFixed(3)} th=${evidenceDebug.threshold.toFixed(2)} missing=[${evidenceDebug.missingEntities.join(",")}])`
+      : "evidence(n/a)";
+    const speculativePart = speculativeDebug
+      ? `spec(sim=${speculativeDebug.similarity.toFixed(3)} th=${speculativeDebug.threshold.toFixed(2)} missing=[${speculativeDebug.missingEntities.join(",")}])`
+      : "spec(n/a)";
+    console.log(`[chat] reuse-debug ${evidencePart} ${speculativePart}`);
+  }
 
   const context = buildContext(chunks);
   const { tokenStream, modelUsed } = await streamAnswer(context, query);
@@ -103,6 +134,27 @@ export async function POST(req: Request) {
         modelUsed,
         retrievalMs,
         retrievalPath,
+        reuseDebug:
+          mode === "optimized"
+            ? {
+                evidence: evidenceDebug
+                  ? {
+                      similarity: Number(evidenceDebug.similarity.toFixed(4)),
+                      threshold: evidenceDebug.threshold,
+                      missingEntities: evidenceDebug.missingEntities,
+                      pass: evidenceDebug.pass,
+                    }
+                  : null,
+                speculative: speculativeDebug
+                  ? {
+                      similarity: Number(speculativeDebug.similarity.toFixed(4)),
+                      threshold: speculativeDebug.threshold,
+                      missingEntities: speculativeDebug.missingEntities,
+                      pass: speculativeDebug.pass,
+                    }
+                  : null,
+              }
+            : null,
         chunkCount: chunks.length,
         chunks: chunks.map((chunk, index) => ({
           rank: index + 1,
